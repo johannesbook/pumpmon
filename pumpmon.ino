@@ -19,6 +19,7 @@ const int minTemp = 5; //warn if temp goes below this figure
 /* Pin definitions */
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7); //LCD digital pins
 #define ONE_WIRE_BUS 13 //Temp sensor (DS onewire)
+#define buzzerPin 12 //passive piezo buzzer
 #define butPin A0 //buttons on LCD module (R ladder)
 #define curSense A1 //current sensor
 #define waterPin A5 //water sensor pin (12V @ normal, ~3V when triggered)
@@ -268,10 +269,10 @@ char readButtons() {
 
 void alarmSound() {
   for (int i = 2000; i<4000; i++) {
-    tone(12,i);
+    tone(buzzerPin,i);
   }
   for (int i = 4000; i>2000; i--) {
-    tone(12,i);
+    tone(buzzerPin,i);
   }
 }
 
@@ -279,11 +280,11 @@ void alarmSound() {
 void bootSound() {
   int speed = 100;  
   
-  tone(12,1760,speed); //A
+  tone(buzzerPin,1760,speed); //A
   delay(speed);
-  tone(12,2637,speed); //E
+  tone(buzzerPin,2637,speed); //E
   delay(speed);
-  tone(12,3520,speed); //A
+  tone(buzzerPin,3520,speed); //A
   delay(speed);  
 }
 
