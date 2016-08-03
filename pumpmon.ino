@@ -1,0 +1,289 @@
+
+/* A small tool to monitor my garden water pump. Features:
+ * - checking pump temperature (high and low). Low = risk for freeze, high = running dry.
+ * - checking for too high power use (running heavy / mechanical failure). Ignoring high power during first 10 seconds (to ignore intermittent events)
+ * - can turn off pump if error occurs (high temp / high power)
+ * - reads water alarm status and sounds alarm if floor is wet
+ * - displays how much it was running the last X hours
+ * - displays time since last run
+ */
+
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <LiquidCrystal.h>
+
+const int maxPower = 900; //kill pump if power goes above (pump is rated 900W)
+const int maxTemp = 40; //kill pump if pump house goes above
+const int minTemp = 5; //warn if temp goes below this figure
+
+/* Pin definitions */
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7); //LCD digital pins
+#define ONE_WIRE_BUS 13 //Temp sensor (DS onewire)
+#define butPin A0 //buttons on LCD module (R ladder)
+#define curSense A1 //current sensor
+#define waterPin A5 //water sensor pin (12V @ normal, ~3V when triggered)
+#define shutdownPin 2 //pin to trigger shutdown (using the water alarm)
+
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+bool freezeFlag = false;
+int overpowerCount = 0;
+
+const int historyLength = 4*60; //4 hours * 60 minutes
+float runHistory[historyLength];
+int runBucket = 0;
+int idleBucket= 0;
+int loopCount = 0;
+unsigned long timesinceLast; //time since last run, in seconds
+
+void setup() {
+  bootSound();
+  sensors.begin();
+  Serial.begin(115200);
+  lcd.begin(16, 2);   // set up the LCD's number of columns and rows
+  printStatus("Allt verkar okej");
+  Serial.print("Startar...");
+  for (int i=0; i<historyLength; i++) {
+    runHistory[i] = 0;
+  }
+}
+
+
+void loop() {  
+  int temp; //pump house temperature in deg C
+  float power; //power used by the pump in W
+  float runTime; //ratio in %
+  bool waterStatus; //if water alarm is triggered
+
+  //TEMPERATURE
+  if (loopCount == 0) { //unneccessary to do this all the time, temp measurements takes a long time
+    //Temperature at the pump house (probably close to water temperature after running some time)  
+    temp = readTemp();
+    printTemp(temp); //print temp to display
+    checkTemp(temp); //check temp for high and low, and take action
+    loopCount = 0;
+  }
+  loopCount++;
+    
+  //POWER
+  power = readPower();
+  printPower(power); //print currently used power to display
+  checkPower(power); //check if power is too high (something broke)
+
+  //TIME SINCE LAST RUN
+  calculatetimesinceLast(power);
+  printtimesinceLast();
+  
+  //RUNNING TIME RATIO
+  runTime = calculaterunTime(power);
+  printrunTime(runTime);
+
+  //WATER ALARM
+  waterStatus = readWateralarm();
+  printwaterStatus(waterStatus);
+
+  //TEST BUTTON
+  if ((analogRead(A0) > 730) and (analogRead(A0) < 750) ) { //if select button pressed
+    shutDown();
+  }
+}
+
+void printStatus(String msg) {
+  lcd.setCursor(0, 0);
+  lcd.print(msg);
+}
+
+void shutDown() {
+  digitalWrite(shutdownPin, HIGH);
+}
+
+unsigned long lastmillis = 0;
+
+void printtimesinceLast() {
+  if (timesinceLast < 1) {
+    printStatus("Pumpar.         ");
+  }
+  if ( (timesinceLast >= 2) and (timesinceLast < 60) ) {
+    printStatus("Stilla.         ");
+  }  
+  if ( (timesinceLast >= 60) and (timesinceLast < 3600) ) {
+    printStatus("Stilla i " + String(int(timesinceLast/60)) + " min.    ");
+  }
+  if (timesinceLast >= 3600) {
+    printStatus("Stilla i " + String(int(timesinceLast/3600)) + " tim.    ");
+  }
+  Serial.print(lastmillis);
+  Serial.print("  |  ");
+  Serial.println(timesinceLast);
+}
+
+void calculatetimesinceLast(int pwr) {
+  if (pwr > 50) {
+    timesinceLast = 0; //pump running, reset timer
+    lastmillis = millis();
+  } else {
+    timesinceLast = (millis() - lastmillis) / 1000;
+  }
+}
+
+void printrunTime(float runTime) {
+  lcd.setCursor(6, 1);
+  lcd.print(int(runTime));
+  lcd.print("%");  
+}
+
+float calculaterunTime(int pwr) {
+  int second = ((millis()/1000) % 60) + 1;
+  int i;
+  float ratio;
+
+  if (second < 60) { //average during the minute
+    if (pwr > 50) { //pump is running now
+      runBucket++;
+    } else {
+      idleBucket++;
+    }
+  } else { //one minute has passed, store the number from this minute
+    for (i = historyLength-1; i > 0; i--) {
+      runHistory[i] = runHistory[i-1]; //thrash the oldest sample and rotate the buffer one step
+    }
+    runHistory[0] = (float)runBucket / ((float)runBucket + (float)idleBucket); 
+    idleBucket = 0;
+    runBucket = 0;
+    delay(1000); //to make sure we won't store more times this same second
+  }
+
+  //calculate average on-ratio
+  for (i = 0; i<historyLength; i++) {
+    ratio += runHistory[i];
+  }
+
+  ratio = 100 * ratio / historyLength; // *100 since it's %
+  return round(ratio);
+}
+
+bool readWateralarm() {
+  int val = analogRead(waterPin);
+  if (val < 300) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void printwaterStatus(bool status) {
+  if (status) {
+    printStatus("Wet on floor!   ");
+  }
+}
+
+int readPower() {
+  float pwr = 0;
+
+  for (int i = 0; i < 2000; i++) {  //average over ~200 ms = 10 periods @ 50 Hz
+    pwr += analogRead(curSense); //one read takes ~100 us
+  }
+  pwr = pwr / 2000.0; //we had 2000 samples
+  pwr = pwr * 2.0; //since only half the period is visible (single-wave rectifying)
+  pwr = pwr / 20.48; //divide by 20.48 since 1A <=> 100 mV <=> ADC value of 20,48 (1024 = 5V)
+  pwr = pwr * 230.0; //multiply by mains voltage to get power
+
+  return round(pwr);
+}
+
+void printPower(int pwr) {
+  lcd.setCursor(0,1);
+  lcd.print(pwr);
+  lcd.print("W  "); //a few extra spaces to delete previous writes on display
+}
+
+void checkPower(int pwr) {
+  if (pwr > maxPower) {
+    overpowerCount++;
+    delay(1000); //to ignore pump startup power fail
+  }
+  if (pwr < 50) { //reset if pump is stopped, if not, alarm would sound after ten starts
+    overpowerCount = 0;
+  }
+  if (overpowerCount > 10) {
+    shutDown();
+    printStatus("Effektlarm!     ");
+    while(1) {
+      alarmSound();
+    }    
+  }
+  
+}
+
+void checkTemp(int tmp) { //if temp below +3, sound alarm and do nothing else
+  //check for freezing:
+  if (tmp <= minTemp) {
+    freezeFlag = true; //needs reset to clear flag
+  }
+  if (freezeFlag) {
+    printStatus("Frysrisk!       ");
+    for (int i = 0; i < 100; i++) {  //sound the alarm, but also update temperature on display once and a while
+      alarmSound();
+    }
+  }
+
+  //check if running dry:
+  if (tmp >= maxTemp) {
+    printStatus("Varmt!");
+    shutDown();
+    while(1);
+  }
+
+  
+}
+
+void printTemp(int tmp) {
+  lcd.setCursor(12, 1);
+  lcd.print(tmp);
+  lcd.print(char(223));
+  lcd.print("C");  
+}
+
+int readTemp() {
+  sensors.requestTemperatures();
+  return round(sensors.getTempCByIndex(0));
+}
+
+
+/*
+char readButtons() {
+  int val = analogRead(butPin);
+  int margin = 50;
+  int select = 7413;
+  int left = 5043;
+  int up = 1443;
+  int down = 3293;
+  int right = 23;
+  
+  if (val < 7430
+}
+*/
+
+
+void alarmSound() {
+  for (int i = 2000; i<4000; i++) {
+    tone(12,i);
+  }
+  for (int i = 4000; i>2000; i--) {
+    tone(12,i);
+  }
+}
+
+
+void bootSound() {
+  int speed = 100;  
+  
+  tone(12,1760,speed); //A
+  delay(speed);
+  tone(12,2637,speed); //E
+  delay(speed);
+  tone(12,3520,speed); //A
+  delay(speed);  
+}
+
