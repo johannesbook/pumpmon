@@ -63,6 +63,7 @@ void loop() {
     temp = readTemp();
     printTemp(temp); //print temp to display
     checkTemp(temp); //check temp for high and low, and take action
+    Serial.print(temp);
     loopCount = 0;
   }
   loopCount++;
@@ -117,6 +118,9 @@ void printtimesinceLast() {
   if (timesinceLast >= 3600) {
     printStatus("Stilla i " + String(int(timesinceLast/3600)) + " tim.    ");
   }
+  Serial.print(lastmillis);
+  Serial.print("  |  ");
+  Serial.println(timesinceLast);
 }
 
 void calculatetimesinceLast(int pwr) {
@@ -182,10 +186,10 @@ void printwaterStatus(bool status) {
 int readPower() {
   float pwr = 0;
 
-  for (int i = 0; i < 10000; i++) {  //average over 1s
+  for (int i = 0; i < 2000; i++) {  //average over ~200 ms = 10 periods @ 50 Hz
     pwr += analogRead(curSense); //one read takes ~100 us
   }
-  pwr = pwr / 10000.0; //we had 2000 samples
+  pwr = pwr / 2000.0; //we had 2000 samples
   pwr = pwr * 2.0; //since only half the period is visible (single-wave rectifying)
   pwr = pwr / 20.48; //divide by 20.48 since 1A <=> 100 mV <=> ADC value of 20,48 (1024 = 5V)
   pwr = pwr * 230.0; //multiply by mains voltage to get power

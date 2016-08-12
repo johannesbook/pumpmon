@@ -66,9 +66,6 @@ void loop() {
     loopCount = 0;
   }
   loopCount++;
-  if (loopCount == 100) {
-    loopCount = 0;
-  }
     
   //POWER
   power = readPower();
@@ -117,6 +114,9 @@ void printtimesinceLast() {
   if (timesinceLast >= 3600) {
     printStatus("Stilla i " + String(int(timesinceLast/3600)) + " tim.    ");
   }
+  Serial.print(lastmillis);
+  Serial.print("  |  ");
+  Serial.println(timesinceLast);
 }
 
 void calculatetimesinceLast(int pwr) {
@@ -182,13 +182,18 @@ void printwaterStatus(bool status) {
 int readPower() {
   float pwr = 0;
 
-  for (int i = 0; i < 10000; i++) {  //average over 1s
+  for (int i = 0; i < 1000; i++) {  //average over ~200 ms = 10 periods @ 50 Hz
     pwr += analogRead(curSense); //one read takes ~100 us
   }
-  pwr = pwr / 10000.0; //we had 2000 samples
+  Serial.print("1: " + String(pwr));
+  pwr = pwr / 1000.0; //we had 2000 samples
+  Serial.print(" 2: "+String(pwr));
   pwr = pwr * 2.0; //since only half the period is visible (single-wave rectifying)
+  Serial.print(" 3: "+String(pwr));
   pwr = pwr / 20.48; //divide by 20.48 since 1A <=> 100 mV <=> ADC value of 20,48 (1024 = 5V)
+  Serial.print(" 4: "+String(pwr));
   pwr = pwr * 230.0; //multiply by mains voltage to get power
+  Serial.println(" 5: "+String(pwr));
   pwr = pwr * 1.47; //correction factor, for some reason the figure is low. Perhaps something strange with the rectifying, or with my math. (1.47 is suspiciously close to sqrt(2)) 
 
   return round(pwr);
